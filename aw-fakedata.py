@@ -10,6 +10,8 @@ from aw_core.models import Event
 
 from aw_client import ActivityWatchClient
 
+from requests.exceptions import HTTPError
+
 hostname = "fake-data"
 window_bucket_name = "aw-watcher-window-testing_"+hostname
 afk_bucket_name = "aw-watcher-afk-testing_"+hostname
@@ -19,8 +21,14 @@ def delete_prev_buckets():
     client = ActivityWatchClient("aw-fake-client", testing=True)
     client.client_hostname = hostname
     client.connect()
-    client.delete_bucket(window_bucket_name)
-    client.delete_bucket(afk_bucket_name)
+    try:
+        client.delete_bucket(window_bucket_name)
+    except HTTPError:
+        pass
+    try:
+        client.delete_bucket(afk_bucket_name)
+    except HTTPError:
+        pass
 
 
 def setup_client():
@@ -29,10 +37,10 @@ def setup_client():
     client.client_hostname = hostname
 
     eventtype = "currentwindow"
-    client.setup_bucket(window_bucket_name, eventtype)
+    client.create_bucket(window_bucket_name, eventtype)
 
     eventtype = "afkstatus"
-    client.setup_bucket(afk_bucket_name, eventtype)
+    client.create_bucket(afk_bucket_name, eventtype)
 
     client.connect()
     return client
@@ -45,7 +53,7 @@ def window_events(client, start_date, end_date):
         appname = "App "+str(app_i)
         for title_i in range(10):
             title = "Title "+str(title_i)
-            e = Event(label=appname, timestamp=start_date, keyvals={"title": title})
+            e = Event(timestamp=start_date, data={"title": title, "app": appname})
             template_window_events.append(e)
     ts = start_date
     window_events = []
@@ -70,7 +78,7 @@ def window_events(client, start_date, end_date):
 def afk_events(client, start_date, end_date):
     print("Generating fake afk events")
     interval = 3000
-    base_event = Event(label="not-afk", timestamp=start_date, duration=timedelta(seconds=interval))
+    base_event = Event(data={"status": "not-afk"}, timestamp=start_date, duration=timedelta(seconds=interval))
     afk_events = []
     ts = start_date
     afk_events = []
@@ -84,7 +92,7 @@ def afk_events(client, start_date, end_date):
 
 if __name__ == '__main__':
     delete_prev_buckets()
-    start_date = datetime.now(timezone.utc) - timedelta(hours=7)
+    start_date = datetime.now(timezone.utc) - timedelta(hours=48)
     end_date = datetime.now(timezone.utc)
     print(start_date)
     print(end_date)
@@ -92,6 +100,3 @@ if __name__ == '__main__':
     client = setup_client()
     window_events(client, start_date, end_date)
     afk_events(client, start_date, end_date)
-
-    # Sleep so client dispatcher has time to send events
-    sleep(10)
