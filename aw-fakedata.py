@@ -57,10 +57,10 @@ def window_events(client, start_date, end_date):
             template_window_events.append(e)
     ts = start_date
     window_events = []
-    batch_size = 5000
+    batch_size = 500
     count = 0
     while ts < end_date:
-        event_duration = 25
+        event_duration = 5
         e = copy(random.choice(template_window_events))
         e.timestamp = ts
         e.duration = timedelta(seconds=event_duration)
@@ -92,11 +92,12 @@ def afk_events(client, start_date, end_date):
 
 if __name__ == '__main__':
     delete_prev_buckets()
-    start_date = datetime.now(timezone.utc) - timedelta(hours=48)
+    client = setup_client()
+
+    start_date = datetime.now(timezone.utc) - timedelta(hours=24*30)
     end_date = datetime.now(timezone.utc)
     print(start_date)
     print(end_date)
 
-    client = setup_client()
     window_events(client, start_date, end_date)
     afk_events(client, start_date, end_date)
