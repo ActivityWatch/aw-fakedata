@@ -2,102 +2,137 @@
 
 import random
 import logging
-from time import sleep
 from copy import copy
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date, time
+from typing import List, Iterator
 
 from aw_core.models import Event
 
 from aw_client import ActivityWatchClient
 
-from requests.exceptions import HTTPError
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-hostname = "fake-data"
-window_bucket_name = "aw-watcher-window-testing_"+hostname
-afk_bucket_name = "aw-watcher-afk-testing_"+hostname
 
-def delete_prev_buckets():
-    logging.info("Deleting old buckets")
-    client = ActivityWatchClient("aw-fake-client", testing=True)
-    client.client_hostname = hostname
-    client.connect()
-    try:
-        client.delete_bucket(window_bucket_name)
-    except HTTPError:
-        pass
-    try:
-        client.delete_bucket(afk_bucket_name)
-    except HTTPError:
-        pass
+hostname = "fakedata"
+window_bucket_name = "aw-watcher-window_" + hostname
+afk_bucket_name = "aw-watcher-afk_" + hostname
+client_name = "aw-fakedata"
 
 
 def setup_client():
-    logging.info("Setting up client")
-    client = ActivityWatchClient("aw-fake-client", testing=True)
+    logger.info("Setting up client")
+    client = ActivityWatchClient(client_name, testing=True)
     client.client_hostname = hostname
 
-    eventtype = "currentwindow"
-    client.create_bucket(window_bucket_name, eventtype)
+    buckets = client.get_buckets()
+    logger.info("Deleting old buckets")
+    for bucket in [window_bucket_name, afk_bucket_name]:
+        if bucket in buckets:
+            client.delete_bucket(bucket)
 
-    eventtype = "afkstatus"
-    client.create_bucket(afk_bucket_name, eventtype)
+    client.create_bucket(window_bucket_name, "currentwindow")
+    client.create_bucket(afk_bucket_name, "afkstatus")
 
     client.connect()
     return client
 
-def window_events(client, start_date, end_date):
-    print("Generating fake window events")
 
-    template_window_events = []
-    for app_i in range(4):
-        appname = "App "+str(app_i)
-        for title_i in range(10):
-            title = "Title "+str(title_i)
-            e = Event(timestamp=start_date, data={"title": title, "app": appname})
-            template_window_events.append(e)
-    ts = start_date
+# Sample window event data with weights
+sample_data: List[dict] = [
+    {"app": "zoom", "title": "Zoom Meeting", "$weight": 32},
+    {"app": "Minecraft", "title": "Minecraft", "$weight": 25},
+    {
+        "app": "Firefox",
+        "title": "ActivityWatch/activitywatch: Track how you spend your time - github.com/",
+        "$weight": 23,
+    },
+    {
+        "app": "Firefox",
+        "title": "Home / Twitter - twitter.com/",
+        "$weight": 11,
+    },
+    {
+        "app": "Firefox",
+        "title": "reddit: the front page of the internet - reddit.com/",
+        "$weight": 13,
+    },
+    {
+        "app": "Firefox",
+        "title": "Stack Overflow - stackoverflow.com/",
+        "$weight": 6,
+    },
+    {"app": "Terminal", "title": "vim ~/code/activitywatch/aw-server", "$weight": 15},
+    {"app": "Terminal", "title": "bash ~/code/activitywatch", "$weight": 15},
+    {
+        "app": "Terminal",
+        "title": "vim ~/code/activitywatch/other/aw-fakedata",
+        "$weight": 10,
+    },
+    {"app": "Terminal", "title": "vim ~/code/activitywatch/README.md", "$weight": 10},
+    {"app": "Spotify", "title": "Spotify", "$weight": 5},
+]
+
+
+def random_events(day: date):
+    """Generates random window and AFK events for a single day"""
+    day_offset = timedelta(hours=8)
+    start = datetime.combine(day, time()).replace(tzinfo=timezone.utc) + day_offset
+    day_duration = timedelta(hours=1 + 8 * random.random())
+    stop = start + day_duration
+
     window_events = []
-    batch_size = 500
-    count = 0
-    while ts < end_date:
-        event_duration = 5
-        e = copy(random.choice(template_window_events))
-        e.timestamp = ts
-        e.duration = timedelta(seconds=event_duration)
-        window_events.append(e)
-        ts += timedelta(seconds=event_duration)
-        count += 1
-        if count % batch_size == 0:
-            client.send_events(window_bucket_name, window_events)
-            window_events = []
-            sleep(0.05)
-    client.send_events(window_bucket_name, window_events)
+    max_event_duration = 60
+    ts = start
+    while ts < stop:
+        data = copy(
+            random.choices(sample_data, weights=[d["$weight"] for d in sample_data])[0]
+        )
+        e = Event(
+            timestamp=ts,
+            duration=timedelta(seconds=random.random() * max_event_duration),
+            data=data,
+        )
+        window_events += [e]
+        ts += e.duration
 
-    print("Sent {} window events".format(count))
+    afk_events = [
+        Event(
+            timestamp=start,
+            duration=day_duration,
+            data={"status": "not-afk"},
+        )
+    ]
 
-def afk_events(client, start_date, end_date):
-    print("Generating fake afk events")
-    interval = 3000
-    base_event = Event(data={"status": "not-afk"}, timestamp=start_date, duration=timedelta(seconds=interval))
-    afk_events = []
-    ts = start_date
-    afk_events = []
-    while ts < end_date:
-        e = copy(base_event)
-        e.timestamp = ts-timedelta(seconds=1)
-        ts += timedelta(seconds=interval)
-        afk_events.append(e)
-    print("Sending {} afk events".format(len(afk_events)))
-    client.send_events(afk_bucket_name, afk_events)
+    return window_events, afk_events
 
-if __name__ == '__main__':
-    delete_prev_buckets()
+
+def daterange(d1: datetime, d2: datetime) -> Iterator[date]:
+    ts = d1
+    while ts < d2:
+        yield ts.date()
+        ts += timedelta(days=1)
+
+
+def generate(client, start_date, end_date):
+    print("Generating fake window events")
+    count_window, count_afk = 0, 0
+    for d in daterange(start_date, end_date):
+        window_events, afk_events = random_events(d)
+        client.send_events(window_bucket_name, window_events)
+        client.send_events(afk_bucket_name, afk_events)
+        count_window += len(window_events)
+        count_afk += len(afk_events)
+
+    print(f"Sent {count_window} window events")
+    print(f"Sent {count_afk} AFK events")
+
+
+if __name__ == "__main__":
     client = setup_client()
 
-    start_date = datetime.now(timezone.utc) - timedelta(hours=24*30)
+    start_date = datetime.now(timezone.utc) - timedelta(hours=24 * 30)
     end_date = datetime.now(timezone.utc)
-    print(start_date)
-    print(end_date)
+    print(f"Range: {start_date} to {end_date}")
 
-    window_events(client, start_date, end_date)
-    afk_events(client, start_date, end_date)
+    generate(client, start_date, end_date)
