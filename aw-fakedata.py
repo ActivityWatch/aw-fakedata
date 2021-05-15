@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import os
 import random
 import logging
 from copy import copy
@@ -22,7 +23,15 @@ client_name = "aw-fakedata"
 
 def setup_client():
     logger.info("Setting up client")
-    client = ActivityWatchClient(client_name, testing=True)
+
+    # Default is to run in testing mode, can be run in prod mode if set to exactly 'false'
+    testing = os.getenv("AW_TESTING", "true").lower() not in ["false"]
+    if testing:
+        logger.info(
+            "Using testing parameters (set the env var AW_TESTING to false to run in prod mode)"
+        )
+
+    client = ActivityWatchClient(client_name, testing=testing)
     client.client_hostname = hostname
 
     buckets = client.get_buckets()
