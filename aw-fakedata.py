@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 
 import os
+import sys
 import random
 import logging
 from copy import copy
 from datetime import datetime, timezone, timedelta, date, time
-from typing import List, Iterator
+from collections import defaultdict
+from typing import List, Iterator, Dict
 
 from aw_core.models import Event
 
@@ -16,12 +18,15 @@ logger = logging.getLogger(__name__)
 
 
 hostname = "fakedata"
-window_bucket_name = "aw-watcher-window_" + hostname
-afk_bucket_name = "aw-watcher-afk_" + hostname
 client_name = "aw-fakedata"
 
+bucket_window = "aw-watcher-window_" + hostname
+bucket_afk = "aw-watcher-afk_" + hostname
+bucket_browser_chrome = "aw-watcher-web-chrome_fakedata"
+bucket_browser_firefox = "aw-watcher-web-firefox_fakedata"
 
-def setup_client():
+
+def setup_client() -> ActivityWatchClient:
     logger.info("Setting up client")
 
     # Default is to run in testing mode, can be run in prod mode if set to exactly 'false'
@@ -36,19 +41,47 @@ def setup_client():
 
     buckets = client.get_buckets()
     logger.info("Deleting old buckets")
-    for bucket in [window_bucket_name, afk_bucket_name]:
-        if bucket in buckets:
-            client.delete_bucket(bucket)
+    buckets_all = [
+        bucket_afk,
+        bucket_window,
+        bucket_browser_chrome,
+        bucket_browser_firefox,
+    ]
 
-    client.create_bucket(window_bucket_name, "currentwindow")
-    client.create_bucket(afk_bucket_name, "afkstatus")
+    if not testing:
+        ans = input(
+            f"Running in prod, are you sure you want to delete all existing buckets?\n{buckets_all}\nAre you sure? (y/N)"
+        )
+        if ans != "y":
+            print("Exiting")
+            sys.exit(0)
+
+    for bucket in [
+        bucket_window,
+        bucket_afk,
+        bucket_browser_chrome,
+        bucket_browser_firefox,
+    ]:
+        if bucket in buckets:
+            client.delete_bucket(bucket, force=True)
+
+    client.create_bucket(bucket_window, "currentwindow")
+    client.create_bucket(bucket_afk, "afkstatus")
+
+    client.create_bucket(bucket_browser_chrome, "web.tab.current")
+    client.create_bucket(bucket_browser_firefox, "web.tab.current")
 
     client.connect()
     return client
 
 
 # Sample window event data with weights
-sample_data: List[dict] = [
+sample_data_afk: List[dict] = [
+    {"status": "afk", "$weight": 30},
+    {"status": "not-afk", "$weight": 20},
+]
+
+sample_data_window: List[dict] = [
     {"app": "zoom", "title": "Zoom Meeting", "$weight": 32},
     {"app": "Minecraft", "title": "Minecraft", "$weight": 25},
     {
@@ -80,40 +113,39 @@ sample_data: List[dict] = [
     },
     {"app": "Terminal", "title": "vim ~/code/activitywatch/README.md", "$weight": 10},
     {"app": "Spotify", "title": "Spotify", "$weight": 5},
+    {"app": "Chrome", "title": "Unknown site", "$weight": 5},
+]
+
+sample_data_browser: List[dict] = [
+    {"title": "GitHub", "url": "https://github.com", "$weight": 10},
+    {"title": "Twitter", "url": "https://twitter.com", "$weight": 3},
 ]
 
 
-def random_events(day: date):
-    """Generates random window and AFK events for a single day"""
-    day_offset = timedelta(hours=8)
-    start = datetime.combine(day, time()).replace(tzinfo=timezone.utc) + day_offset
-    day_duration = timedelta(hours=1 + 8 * random.random())
-    stop = start + day_duration
+def random_events(
+    start: datetime, stop: datetime, sample_data: List[dict], max_event_duration=300
+) -> List[Event]:
+    """Randomly samples events from sample data"""
+    events = []
 
-    window_events = []
-    max_event_duration = 60
     ts = start
     while ts < stop:
         data = copy(
             random.choices(sample_data, weights=[d["$weight"] for d in sample_data])[0]
         )
+
+        # Ensure event doesn't spill over
+        end = min(stop, ts + timedelta(seconds=random.random() * max_event_duration))
+
         e = Event(
             timestamp=ts,
-            duration=timedelta(seconds=random.random() * max_event_duration),
+            duration=end - ts,
             data=data,
         )
-        window_events += [e]
+        events += [e]
         ts += e.duration
 
-    afk_events = [
-        Event(
-            timestamp=start,
-            duration=day_duration,
-            data={"status": "not-afk"},
-        )
-    ]
-
-    return window_events, afk_events
+    return events
 
 
 def daterange(d1: datetime, d2: datetime) -> Iterator[date]:
@@ -123,18 +155,68 @@ def daterange(d1: datetime, d2: datetime) -> Iterator[date]:
         ts += timedelta(days=1)
 
 
-def generate(client, start_date, end_date):
+def generate(client, start: datetime, end: datetime):
     print("Generating fake window events")
-    count_window, count_afk = 0, 0
-    for d in daterange(start_date, end_date):
-        window_events, afk_events = random_events(d)
-        client.send_events(window_bucket_name, window_events)
-        client.send_events(afk_bucket_name, afk_events)
-        count_window += len(window_events)
-        count_afk += len(afk_events)
+    buckets = generate_days(start, end)
 
-    print(f"Sent {count_window} window events")
-    print(f"Sent {count_afk} AFK events")
+    for bucketid, events in buckets.items():
+        client.send_events(bucketid, events)
+        print(f"Sent {len(events)} to bucket {bucketid}")
+
+
+def generate_days(start: datetime, stop: datetime) -> Dict[str, List[Event]]:
+    buckets: Dict[str, List[Event]] = defaultdict(list)
+    for day in daterange(start, stop):
+        for bucket, events in generate_day(day).items():
+            buckets[bucket] += events
+    return buckets
+
+
+def generate_day(day: date) -> Dict[str, List[Event]]:
+    # Select a random day start and stop
+    day_offset = timedelta(hours=6)
+    start = datetime.combine(day, time()).replace(tzinfo=timezone.utc) + day_offset
+    day_duration = timedelta(hours=1 + 8 * random.random())
+    stop = start + day_duration
+
+    return generate_activity(start, stop)
+
+
+def generate_afk(start: datetime, stop: datetime) -> List[Event]:
+    return random_events(start, stop, sample_data_afk, max_event_duration=120 * 60)
+
+
+def generate_browser(start: datetime, stop: datetime) -> List[Event]:
+    return random_events(start, stop, sample_data_browser)
+
+
+def generate_activity(start, end) -> Dict[str, List[Event]]:
+    # Generate an AFK event and containing window events
+    events_afk = generate_afk(start, end)
+    events_window = []
+    events_browser_chrome = []
+    events_browser_firefox = []
+
+    for event in events_afk:
+        if event.data["status"] == "not-afk":
+            events_window = random_events(start, end, sample_data_window)
+
+    for event in events_window:
+        if event.data["app"].lower() == "firefox":
+            events_browser_firefox += generate_browser(
+                event.timestamp, event.timestamp + event.duration
+            )
+        if event.data["app"].lower() == "chrome":
+            events_browser_chrome += generate_browser(
+                event.timestamp, event.timestamp + event.duration
+            )
+
+    return {
+        bucket_window: events_window,
+        bucket_afk: events_afk,
+        bucket_browser_chrome: events_browser_chrome,
+        bucket_browser_firefox: events_browser_firefox,
+    }
 
 
 if __name__ == "__main__":
