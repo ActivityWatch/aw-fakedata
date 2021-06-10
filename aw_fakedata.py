@@ -9,6 +9,8 @@ from datetime import datetime, timezone, timedelta, date, time
 from collections import defaultdict
 from typing import List, Iterator, Dict
 
+import click
+
 from aw_core.models import Event
 
 from aw_client import ActivityWatchClient
@@ -24,6 +26,24 @@ bucket_window = "aw-watcher-window_" + hostname
 bucket_afk = "aw-watcher-afk_" + hostname
 bucket_browser_chrome = "aw-watcher-web-chrome_fakedata"
 bucket_browser_firefox = "aw-watcher-web-firefox_fakedata"
+
+now = datetime.now(timezone.utc)
+
+
+@click.command("aw-fakedata")
+@click.option("--since", type=click.DateTime(formats=["%Y-%m-%d"]))
+@click.option("--until", type=click.DateTime(formats=["%Y-%m-%d"]))
+def main(since: datetime, until: datetime = None):
+    client = setup_client()
+
+    if not until:
+        until = now
+
+    since = since.replace(tzinfo=timezone.utc)
+    until = until.replace(tzinfo=timezone.utc)
+
+    print(f"Range: {since} to {until}")
+    generate(client, since, until)
 
 
 def setup_client() -> ActivityWatchClient:
@@ -176,13 +196,14 @@ def generate_day(day: date) -> Dict[str, List[Event]]:
     # Select a random day start and stop
     day_offset = timedelta(hours=6)
     start = datetime.combine(day, time()).replace(tzinfo=timezone.utc) + day_offset
-    day_duration = timedelta(hours=1 + 8 * random.random())
+    day_duration = timedelta(hours=4 + 8 * random.random())
     stop = start + day_duration
 
     return generate_activity(start, stop)
 
 
 def generate_afk(start: datetime, stop: datetime) -> List[Event]:
+    # FIXME: Randomly generates non-afk events in sequence, should alternate
     return random_events(start, stop, sample_data_afk, max_event_duration=120 * 60)
 
 
@@ -199,7 +220,9 @@ def generate_activity(start, end) -> Dict[str, List[Event]]:
 
     for event in events_afk:
         if event.data["status"] == "not-afk":
-            events_window = random_events(start, end, sample_data_window)
+            events_window += random_events(
+                event.timestamp, event.timestamp + event.duration, sample_data_window
+            )
 
     for event in events_window:
         if event.data["app"].lower() == "firefox":
@@ -220,10 +243,4 @@ def generate_activity(start, end) -> Dict[str, List[Event]]:
 
 
 if __name__ == "__main__":
-    client = setup_client()
-
-    start_date = datetime.now(timezone.utc) - timedelta(hours=24 * 30)
-    end_date = datetime.now(timezone.utc)
-    print(f"Range: {start_date} to {end_date}")
-
-    generate(client, start_date, end_date)
+    main()
