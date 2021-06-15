@@ -27,7 +27,7 @@ bucket_afk = "aw-watcher-afk_" + hostname
 bucket_browser_chrome = "aw-watcher-web-chrome_fakedata"
 bucket_browser_firefox = "aw-watcher-web-firefox_fakedata"
 
-now = datetime.now(timezone.utc)
+now = datetime.now(tz=timezone.utc)
 
 
 @click.command("aw-fakedata")
@@ -38,9 +38,13 @@ def main(since: datetime, until: datetime = None):
 
     if not until:
         until = now
+    else:
+        until = until.replace(tzinfo=timezone.utc)
 
-    since = since.replace(tzinfo=timezone.utc)
-    until = until.replace(tzinfo=timezone.utc)
+    if not since:
+        since = until - timedelta(days=14)
+    else:
+        since = since.replace(tzinfo=timezone.utc)
 
     print(f"Range: {since} to {until}")
     generate(client, since, until)
@@ -168,11 +172,13 @@ def random_events(
     return events
 
 
-def daterange(d1: datetime, d2: datetime) -> Iterator[date]:
+def daterange(d1: datetime, d2: datetime, inclusive=False) -> Iterator[date]:
     ts = d1
     while ts < d2:
         yield ts.date()
         ts += timedelta(days=1)
+    if inclusive:
+        yield ts.date()
 
 
 def generate(client, start: datetime, end: datetime):
@@ -186,7 +192,7 @@ def generate(client, start: datetime, end: datetime):
 
 def generate_days(start: datetime, stop: datetime) -> Dict[str, List[Event]]:
     buckets: Dict[str, List[Event]] = defaultdict(list)
-    for day in daterange(start, stop):
+    for day in daterange(start, stop, inclusive=True):
         for bucket, events in generate_day(day).items():
             buckets[bucket] += events
     return buckets
