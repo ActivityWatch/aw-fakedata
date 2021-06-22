@@ -101,53 +101,109 @@ def setup_client() -> ActivityWatchClient:
 
 # Sample window event data with weights
 sample_data_afk: List[dict] = [
-    {"status": "afk", "$weight": 30},
-    {"status": "not-afk", "$weight": 20},
+    {"status": "not-afk", "$weight": 1, "$duration": 120},
+    {"status": "afk", "$weight": 1, "$duration": 10},
 ]
 
+# $weight controls the likelihood of being picked.
+# $duration can be optionally set to the expected number of minutes per event.
 sample_data_window: List[dict] = [
-    {"app": "zoom", "title": "Zoom Meeting", "$weight": 32},
-    {"app": "Minecraft", "title": "Minecraft", "$weight": 25},
+    # Meetings
+    # Should be ~30min every other day
+    {
+        "app": "zoom",
+        "title": "Zoom Meeting",
+        "$weight": 3,
+        "$duration": 20,
+    },
+    # Games
+    # Should be ~60min every week
+    {"app": "Minecraft", "title": "Minecraft", "$weight": 2, "$duration": 200},
+    # ActivityWatch-related
+    # Should be ~60% of time
     {
         "app": "Firefox",
         "title": "ActivityWatch/activitywatch: Track how you spend your time - github.com/",
-        "$weight": 23,
+        "$weight": 20,
+        "$duration": 5,
     },
-    {
-        "app": "Firefox",
-        "title": "Home / Twitter - twitter.com/",
-        "$weight": 11,
-    },
-    {
-        "app": "Firefox",
-        "title": "reddit: the front page of the internet - reddit.com/",
-        "$weight": 13,
-    },
-    {
-        "app": "Firefox",
-        "title": "Stack Overflow - stackoverflow.com/",
-        "$weight": 6,
-    },
-    {"app": "Terminal", "title": "vim ~/code/activitywatch/aw-server", "$weight": 15},
-    {"app": "Terminal", "title": "bash ~/code/activitywatch", "$weight": 15},
     {
         "app": "Terminal",
         "title": "vim ~/code/activitywatch/other/aw-fakedata",
         "$weight": 10,
     },
-    {"app": "Terminal", "title": "vim ~/code/activitywatch/README.md", "$weight": 10},
-    {"app": "Spotify", "title": "Spotify", "$weight": 5},
-    {"app": "Chrome", "title": "Unknown site", "$weight": 5},
+    {
+        "app": "Terminal",
+        "title": "vim ~/code/activitywatch/README.md",
+        "$weight": 3,
+        "$duration": 5,
+    },
+    {"app": "Terminal", "title": "vim ~/code/activitywatch/aw-server", "$weight": 5},
+    {"app": "Terminal", "title": "bash ~/code/activitywatch", "$weight": 5},
+    # Misc work
+    # Should be ~20% of work
+    {
+        "app": "Firefox",
+        "title": "Gmail - mail.google.com/",
+        "$weight": 5,
+        "$duration": 10,
+    },
+    {
+        "app": "Firefox",
+        "title": "Stack Overflow - stackoverflow.com/",
+        "$weight": 10,
+        "$duration": 5,
+    },
+    {
+        "app": "Firefox",
+        "title": "Google Calendar - calendar.google.com/",
+        "$weight": 5,
+        "$duration": 2,
+    },
+    # Social media
+    # Should be ~30min/day
+    {
+        "app": "Firefox",
+        "title": "reddit: the front page of the internet - reddit.com/",
+        "$weight": 10,
+        "$duration": 10,
+    },
+    {
+        "app": "Firefox",
+        "title": "Home / Twitter - twitter.com/",
+        "$weight": 10,
+        "$duration": 8,
+    },
+    {
+        "app": "Firefox",
+        "title": "Facebook - facebook.com/",
+        "$weight": 10,
+        "$duration": 3,
+    },
+    {"app": "Chrome", "title": "Unknown site", "$weight": 2},
+    # Media
+    # Should be ~1h/month
+    {"app": "Spotify", "title": "Spotify", "$weight": 8, "$duration": 3},
+    {
+        "app": "Chrome",
+        "title": "YouTube - youtube.com/",
+        "$weight": 4,
+        "$duration": 25,
+    },
 ]
 
 sample_data_browser: List[dict] = [
-    {"title": "GitHub", "url": "https://github.com", "$weight": 10},
-    {"title": "Twitter", "url": "https://twitter.com", "$weight": 3},
+    {"title": "GitHub", "url": "https://github.com", "$weight": 10, "$duration": 10},
+    {"title": "Twitter", "url": "https://twitter.com", "$weight": 3, "$duration": 5},
+    {"title": "YouTube", "url": "https://youtube.com", "$weight": 5, "$duration": 20},
 ]
 
 
 def random_events(
-    start: datetime, stop: datetime, sample_data: List[dict], max_event_duration=300
+    start: datetime,
+    stop: datetime,
+    sample_data: List[dict],
+    duration_max_default: float = 120 * 60,
 ) -> List[Event]:
     """Randomly samples events from sample data"""
     events = []
@@ -158,8 +214,13 @@ def random_events(
             random.choices(sample_data, weights=[d["$weight"] for d in sample_data])[0]
         )
 
+        if "$duration" in data:
+            duration = timedelta(minutes=random.uniform(0.5, 2) * data["$duration"])
+        else:
+            duration = timedelta(seconds=random.uniform(5, duration_max_default))
+
         # Ensure event doesn't spill over
-        end = min(stop, ts + timedelta(seconds=random.random() * max_event_duration))
+        end = min(stop, ts + duration)
 
         e = Event(
             timestamp=ts,
@@ -204,17 +265,39 @@ def generate_days(start: datetime, stop: datetime) -> Dict[str, List[Event]]:
 
 def generate_day(day: date) -> Dict[str, List[Event]]:
     # Select a random day start and stop
-    day_offset = timedelta(hours=6)
+    day_offset = timedelta(hours=8)
     start = datetime.combine(day, time()).replace(tzinfo=timezone.utc) + day_offset
-    day_duration = timedelta(hours=4 + 8 * random.random())
+    is_workday = day.isoweekday() in range(1, 6)
+    if is_workday:
+        day_duration = timedelta(hours=5 + 5 * random.random())
+    else:
+        # Weekend
+        day_duration = timedelta(hours=1 + 4 * random.random())
+    # print(day_duration)
     stop = start + day_duration
 
-    return generate_activity(start, stop)
+    # TODO: Add lunchbreak by splitting generate_activity into thw
+    break_start = start + (stop - start) / 2
+    break_duration = timedelta(minutes=random.uniform(60, 120))
+    break_stop = break_start + break_duration
+
+    return merge_activity(
+        generate_activity(start, break_start),
+        generate_activity(break_stop, stop + break_duration),
+    )
+
+
+def merge_activity(d1, d2):
+    dres = defaultdict(list)
+    dres.update(d1)
+    for k in d2:
+        dres[k].extend(d2[k])
+    return dres
 
 
 def generate_afk(start: datetime, stop: datetime) -> List[Event]:
     # FIXME: Randomly generates non-afk events in sequence, should alternate
-    return random_events(start, stop, sample_data_afk, max_event_duration=120 * 60)
+    return random_events(start, stop, sample_data_afk)
 
 
 def generate_browser(start: datetime, stop: datetime) -> List[Event]:
