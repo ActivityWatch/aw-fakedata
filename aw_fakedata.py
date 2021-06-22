@@ -24,8 +24,8 @@ client_name = "aw-fakedata"
 
 bucket_window = "aw-watcher-window_" + hostname
 bucket_afk = "aw-watcher-afk_" + hostname
-bucket_browser_chrome = "aw-watcher-web-chrome_fakedata"
-bucket_browser_firefox = "aw-watcher-web-firefox_fakedata"
+bucket_browser_chrome = "aw-watcher-web-chrome_" + hostname
+bucket_browser_firefox = "aw-watcher-web-firefox_" + hostname
 
 now = datetime.now(tz=timezone.utc)
 
@@ -183,6 +183,10 @@ def daterange(d1: datetime, d2: datetime, inclusive=False) -> Iterator[date]:
 
 def generate(client, start: datetime, end: datetime):
     print("Generating fake window events")
+
+    # Seed the rng to get replicable results.
+    # Identical input parameters should get identical outputs.
+    random.seed(start.timestamp() + end.timestamp())
     buckets = generate_days(start, end)
 
     for bucketid, events in buckets.items():
