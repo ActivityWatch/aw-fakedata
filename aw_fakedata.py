@@ -251,7 +251,7 @@ def generate(client, start: datetime, end: datetime):
     buckets = generate_days(start, end)
 
     for bucketid, events in buckets.items():
-        client.send_events(bucketid, events)
+        client.insert_events(bucketid, events)
         print(f"Sent {len(events)} to bucket {bucketid}")
 
 
