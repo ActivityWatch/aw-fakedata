@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
 
+"""
+File should be self-contained, as it's run by simple `wget .../fakedata.py; python3 fakedata.py` from actions like ActivityWatch/setup-action and integration tests.
+"""
+
 import os
 import sys
 import random
