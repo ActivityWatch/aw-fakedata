@@ -37,7 +37,12 @@ now = datetime.now(tz=timezone.utc)
 @click.command("aw-fakedata")
 @click.option("--since", type=click.DateTime(formats=["%Y-%m-%d"]))
 @click.option("--until", type=click.DateTime(formats=["%Y-%m-%d"]))
-def main(since: datetime, until: datetime = None):
+def main(since: datetime = None, until: datetime = None):
+    """
+    Generates fake data for used in testing of ActivityWatch.
+
+    Will run in testing mode by default, can be overridden with the env var AW_TESTING.
+    """
     client = setup_client()
 
     if not until:
@@ -78,18 +83,13 @@ def setup_client() -> ActivityWatchClient:
 
     if not testing:
         ans = input(
-            f"Running in prod, are you sure you want to delete all existing buckets?\n{buckets_all}\nAre you sure? (y/N)"
+            f"Running in prod, are you sure you want to delete all existing buckets?\n{buckets_all}\nAre you sure? (y/N) "
         )
         if ans != "y":
             print("Exiting")
             sys.exit(0)
 
-    for bucket in [
-        bucket_window,
-        bucket_afk,
-        bucket_browser_chrome,
-        bucket_browser_firefox,
-    ]:
+    for bucket in buckets_all:
         if bucket in buckets:
             client.delete_bucket(bucket, force=True)
 
