@@ -81,9 +81,9 @@ def setup_client() -> ActivityWatchClient:
         bucket_browser_firefox,
     ]
 
-    if not testing:
+    if not testing and sys.stdin.isatty():
         ans = input(
-            f"Running in prod, are you sure you want to delete all existing buckets?\n{buckets_all}\nAre you sure? (y/N) "
+            f"Running in prod, are you sure you want to delete the existing buckets?\n{buckets_all}\nAre you sure? (y/N) "
         )
         if ans != "y":
             print("Exiting")
